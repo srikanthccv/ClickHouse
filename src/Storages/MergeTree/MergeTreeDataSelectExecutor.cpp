@@ -1108,8 +1108,9 @@ std::shared_ptr<QueryIdHolder> MergeTreeDataSelectExecutor::checkLimits(
         auto query_id = context->getCurrentQueryId();
         if (!query_id.empty())
         {
-            auto lock = data.getQueryIdSetLock();
-            if (data.insertQueryIdOrThrowNoLock(query_id, data_settings->max_concurrent_queries, lock))
+            auto & lock = data.getQueryIdSetLock();
+            std::lock_guard guard(lock);
+            if (data.insertQueryIdOrThrowNoLock(query_id, data_settings->max_concurrent_queries, guard))
             {
                 try
                 {
@@ -1118,7 +1119,7 @@ std::shared_ptr<QueryIdHolder> MergeTreeDataSelectExecutor::checkLimits(
                 catch (...)
                 {
                     /// If we fail to construct the holder, remove query_id explicitly to avoid leak.
-                    data.removeQueryIdNoLock(query_id, lock);
+                    data.removeQueryIdNoLock(query_id, guard);
                     throw;
                 }
             }
