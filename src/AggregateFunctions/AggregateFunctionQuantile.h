@@ -291,6 +291,11 @@ struct NameQuantilesBFloat16 { static constexpr auto name = "quantilesBFloat16";
 struct NameQuantileBFloat16Weighted { static constexpr auto name = "quantileBFloat16Weighted"; };
 struct NameQuantilesBFloat16Weighted { static constexpr auto name = "quantilesBFloat16Weighted"; };
 
+struct NameQuantileBFloat16Buckets { static constexpr auto name = "quantileBFloat16Buckets"; };
+struct NameQuantilesBFloat16Buckets { static constexpr auto name = "quantilesBFloat16Buckets"; };
+struct NameQuantileBFloat16WeightedBuckets { static constexpr auto name = "quantileBFloat16WeightedBuckets"; };
+struct NameQuantilesBFloat16WeightedBuckets { static constexpr auto name = "quantilesBFloat16WeightedBuckets"; };
+
 struct NameQuantileGK { static constexpr auto name = "quantileGK"; };
 struct NameQuantilesGK { static constexpr auto name = "quantilesGK"; };
 

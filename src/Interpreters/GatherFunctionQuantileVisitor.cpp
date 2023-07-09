@@ -18,6 +18,7 @@ static const std::unordered_map<String, String> quantile_fuse_name_mapping = {
     {NameQuantile::name, NameQuantiles::name},
     {NameQuantileBFloat16::name, NameQuantilesBFloat16::name},
     {NameQuantileBFloat16Weighted::name, NameQuantilesBFloat16Weighted::name},
+    {NameQuantileBFloat16WeightedBuckets::name, NameQuantilesBFloat16WeightedBuckets::name},
     {NameQuantileDeterministic::name, NameQuantilesDeterministic::name},
     {NameQuantileExact::name, NameQuantilesExact::name},
     {NameQuantileExactExclusive::name, NameQuantilesExactExclusive::name},
@@ -65,7 +66,8 @@ void GatherFunctionQuantileData::FuseQuantileAggregatesData::addFuncNode(ASTPtr 
 
     bool need_two_args = func->name == NameQuantileDeterministic::name || func->name == NameQuantileExactWeighted::name
         || func->name == NameQuantileInterpolatedWeighted::name || func->name == NameQuantileTimingWeighted::name
-        || func->name == NameQuantileTDigestWeighted::name || func->name == NameQuantileBFloat16Weighted::name;
+        || func->name == NameQuantileTDigestWeighted::name || func->name == NameQuantileBFloat16Weighted::name
+        || func->name == NameQuantileBFloat16WeightedBuckets::name;
 
     if (arguments.size() != (need_two_args ? 2 : 1))
         return;
