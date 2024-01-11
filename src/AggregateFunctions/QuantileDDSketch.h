@@ -2,7 +2,7 @@
 
 #include <base/types.h>
 #include <base/sort.h>
-#include <AggregateFunctions/DDSketch.h>
+#include <AggregateFunctions/DDSketchNew.h>
 
 #include <IO/ReadBuffer.h>
 #include <IO/WriteBuffer.h>
@@ -67,7 +67,7 @@ public:
     }
 
 private:
-    DDSketch data;
+    DDSketchNew data;
 
     template <typename T>
     T getImpl(Float64 level) const
