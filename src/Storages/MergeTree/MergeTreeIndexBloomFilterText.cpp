@@ -2,6 +2,8 @@
 
 #include <Columns/ColumnArray.h>
 #include <Common/OptimizedRegularExpression.h>
+#include <Common/logger_useful.h>
+
 #include <Core/Defines.h>
 #include <DataTypes/DataTypeArray.h>
 #include <DataTypes/DataTypesNumber.h>
@@ -15,6 +17,8 @@
 #include <Parsers/ASTLiteral.h>
 #include <Parsers/ASTSelectQuery.h>
 #include <Parsers/ASTSubquery.h>
+#include <Parsers/ExpressionListParsers.h>
+#include <Parsers/parseQuery.h>
 #include <Storages/MergeTree/MergeTreeData.h>
 #include <Storages/MergeTree/MergeTreeIndexUtils.h>
 #include <Storages/MergeTree/RPNBuilder.h>
@@ -323,6 +327,105 @@ bool MergeTreeConditionBloomFilterText::mayBeTrueOnGranule(MergeTreeIndexGranule
     return rpn_stack[0].can_be_true;
 }
 
+std::optional<size_t> MergeTreeConditionBloomFilterText::getKeyIndexForFuncAndMapColumn(const String & func_name, const String & map_column_name)
+{
+    for (size_t i = 0; i < index_columns.size(); ++i)
+    {
+        const auto & index_column = index_columns[i];
+
+        // Parse the index column expression
+        ASTPtr ast = parseExpression(index_column);
+        if (!ast)
+            continue;
+
+        // Check if the index column is arrayMap(x -> func(x), mapValues(map_col))
+        if (const auto * array_map_func = ast->as<ASTFunction>())
+        {
+            if (array_map_func->name == "arrayMap" && array_map_func->arguments && array_map_func->arguments->children.size() == 2)
+            {
+                const auto & lambda_ast = array_map_func->arguments->children[0];
+                const auto & array_ast = array_map_func->arguments->children[1];
+
+                // Check if lambda_ast is a lambda function
+                if (const auto * lambda_func = lambda_ast->as<ASTFunction>())
+                {
+                    if (lambda_func->name == "lambda" && lambda_func->arguments && lambda_func->arguments->children.size() == 2)
+                    {
+                        const auto & lambda_args_ast = lambda_func->arguments->children[0];
+                        const auto & lambda_expr_ast = lambda_func->arguments->children[1];
+
+                        LOG_INFO(getLogger("MergeTreeIndexBloomFilterText"), "lambda_args_ast: {}", lambda_args_ast->dumpTree());
+                        LOG_INFO(getLogger("MergeTreeIndexBloomFilterText"), "lambda_expr_ast: {}", lambda_expr_ast->dumpTree());
+
+                        // Check if lambda_expr_ast is func(x)
+                        if (const auto * inner_func = lambda_expr_ast->as<ASTFunction>())
+                        {
+                            LOG_INFO(getLogger("MergeTreeIndexBloomFilterText"), "inner_func: {}, func_name: {}", inner_func->name, func_name);
+                            if (inner_func->name == func_name)
+                            {
+
+                                // Now check if array_ast is mapValues(map_col)
+                                if (const auto * map_values_func = array_ast->as<ASTFunction>())
+                                {
+                                    LOG_INFO(getLogger("MergeTreeIndexBloomFilterText"), "map_values_func: {}, func_name: {}", map_values_func->name, func_name);
+                                    if (map_values_func->name == "mapValues" && map_values_func->arguments && map_values_func->arguments->children.size() == 1)
+                                    {
+                                        const auto & map_col_ast = map_values_func->arguments->children[0];
+                                        String map_col_name = map_col_ast->getColumnName();
+                                        LOG_INFO(getLogger("MergeTreeIndexBloomFilterText"), "map_col_name: {}", map_col_name);
+
+                                        if (map_col_name == map_column_name)
+                                        {
+                                            // Found a matching index column
+                                            return i;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+
+ASTPtr MergeTreeConditionBloomFilterText::parseExpression(const String & expression)
+{
+    ParserExpression parser;
+    ASTPtr ast;
+
+    try
+    {
+        LOG_INFO(getLogger("MergeTreeIndexBloomFilterText"), "expression: {}", expression);
+        ast = parseQuery(parser, expression, 0, DBMS_DEFAULT_MAX_PARSER_DEPTH, DBMS_DEFAULT_MAX_PARSER_BACKTRACKS);
+    }
+    catch (...)
+    {
+        // Parsing failed
+        return nullptr;
+    }
+
+    return ast;
+}
+
+std::optional<size_t> MergeTreeConditionBloomFilterText::getKeyIndexForFuncAndMapColumnFromIndex(const std::string & column_name)
+{
+    for (const auto & index_column : index_columns)
+    {
+        auto ast = parseExpression(index_column);
+        if (auto index = getKeyIndexForFuncAndMapColumn("lower", column_name))
+        {
+            LOG_INFO(getLogger("MergeTreeIndexBloomFilterText"), "index: {}", *index);
+            return *index;
+        }
+    }
+
+    return std::nullopt;
+}
+
 std::optional<size_t> MergeTreeConditionBloomFilterText::getKeyIndex(const std::string & key_column_name)
 {
     const auto it = std::ranges::find(index_columns, key_column_name);
@@ -441,6 +544,8 @@ bool MergeTreeConditionBloomFilterText::traverseTreeEquals(
         auto key_function_node = key_node.toFunctionNode();
         auto key_function_node_function_name = key_function_node.getFunctionName();
 
+        LOG_INFO(getLogger("MergeTreeIndexBloomFilterText"), "func name: {}", key_function_node_function_name);
+
         if (key_function_node_function_name == "arrayElement")
         {
             /** Try to parse arrayElement for mapKeys index.
@@ -455,6 +560,7 @@ bool MergeTreeConditionBloomFilterText::traverseTreeEquals(
 
             auto first_argument = key_function_node.getArgumentAt(0);
             const auto map_column_name = first_argument.getColumnName();
+            LOG_INFO(getLogger("MergeTreeIndexBloomFilterText"), "map column name: {}", map_column_name);
             if (const auto map_keys_index = getKeyIndex(fmt::format("mapKeys({})", map_column_name)))
             {
                 auto second_argument = key_function_node.getArgumentAt(1);
@@ -476,6 +582,11 @@ bool MergeTreeConditionBloomFilterText::traverseTreeEquals(
             else if (const auto map_values_exists = getKeyIndex(fmt::format("mapValues({})", map_column_name)))
             {
                 key_index = map_values_exists;
+            }
+            else if (const auto map_values_exists_from_index = getKeyIndexForFuncAndMapColumn("lower", map_column_name))
+            {
+                key_index = *map_values_exists_from_index;
+                LOG_INFO(getLogger("MergeTreeIndexBloomFilterText"), "map_values_exists_from_index: {}", *map_values_exists_from_index);
             }
             else
             {
