@@ -99,11 +99,14 @@ public:
 
     void copy(const DDSketchDenseLogarithmic& other)
     {
+        std::cerr << "DDSketch COPY called" << std::endl;
         Float64 rel_acc = (other.mapping->getGamma() - 1) / (other.mapping->getGamma() + 1);
         mapping = std::make_unique<DDSketchLogarithmicMapping>(rel_acc);
         store = std::make_unique<DDSketchDenseStore>();
         negative_store = std::make_unique<DDSketchDenseStore>();
+        std::cerr << "  Before copy - positive store:" << std::endl;
         store->copy(other.store.get());
+        std::cerr << "  Before copy - negative store:" << std::endl;
         negative_store->copy(other.negative_store.get());
         zero_count = other.zero_count;
         count = other.count;
@@ -167,6 +170,7 @@ public:
 
     void deserialize(ReadBuffer& buf)
     {
+        // std::cerr << "\n========== DESERIALIZE FROM DISK ==========" << std::endl;
         // Read the mapping
         UInt8 flag = 0;
         readBinary(flag, buf);
@@ -178,6 +182,10 @@ public:
 
         // Read the positive and negative stores
         readBinary(flag, buf);
+        // std::cerr << "Flag value: " << static_cast<int>(flag) 
+        //           << " (0x" << std::hex << static_cast<int>(flag) << std::dec << ", binary: ";
+        // for (int i = 7; i >= 0; --i) std::cerr << ((flag >> i) & 1);
+        // std::cerr << ")" << std::endl;
         if (flag != enc.FlagTypePositiveStore)
         {
             throw Exception(ErrorCodes::INCORRECT_DATA, "Invalid flag for positive store");
@@ -185,6 +193,10 @@ public:
         store->deserialize(buf);
 
         readBinary(flag, buf);
+        // std::cerr << "Negative store flag value: " << static_cast<int>(flag) 
+        //           << " (0x" << std::hex << static_cast<int>(flag) << std::dec << ", binary: ";
+        // for (int i = 7; i >= 0; --i) std::cerr << ((flag >> i) & 1);
+        // std::cerr << ") Expected: " << static_cast<int>(enc.FlagTypeNegativeStore) << std::endl;
         if (flag != enc.FlagTypeNegativeStore)
         {
             throw Exception(ErrorCodes::INCORRECT_DATA, "Invalid flag for negative store");
@@ -193,11 +205,16 @@ public:
 
         // Read the zero count
         readBinary(flag, buf);
+        // std::cerr << "Zero count flag value: " << static_cast<int>(flag) 
+        //           << " (0x" << std::hex << static_cast<int>(flag) << std::dec << ", binary: ";
+        // for (int i = 7; i >= 0; --i) std::cerr << ((flag >> i) & 1);
+        // std::cerr << ") Expected: " << static_cast<int>(enc.FlagZeroCountVarFloat.byte) << std::endl;
         if (flag != enc.FlagZeroCountVarFloat.byte)
         {
             throw Exception(ErrorCodes::INCORRECT_DATA, "Invalid flag for zero count");
         }
         readBinary(zero_count, buf);
+        // std::cerr << "Zero count value: " << zero_count << std::endl;
         count = negative_store->count + zero_count + store->count;
     }
 
@@ -214,17 +231,20 @@ private:
 
     DDSketchDenseLogarithmic changeMapping(Float64 new_gamma) const
     {
+        std::cerr << "changeMapping called: old_gamma=" << mapping->getGamma() 
+                  << ", new_gamma=" << new_gamma << std::endl;
         auto new_mapping = std::make_unique<DDSketchLogarithmicMapping>((new_gamma - 1) / (new_gamma + 1));
 
         auto new_positive_store = std::make_unique<DDSketchDenseStore>();
         auto new_negative_store = std::make_unique<DDSketchDenseStore>();
+        std::cerr << "  Created new stores - pos: min_key=" << new_positive_store->min_key 
+                  << ", neg: min_key=" << new_negative_store->min_key << std::endl;
 
         auto remap_store = [this, &new_mapping](DDSketchDenseStore& old_store, std::unique_ptr<DDSketchDenseStore>& target_store)
         {
-            for (int i = 0; i < old_store.length(); ++i)
+            for (int old_index = old_store.min_key; old_index <= old_store.max_key; ++old_index)
             {
-                int old_index = i + old_store.offset;
-                Float64 old_bin_count = old_store.bins[i];
+                Float64 old_bin_count = old_store.bins[old_index - old_store.offset];
 
                 Float64 in_lower_bound = this->mapping->lowerBound(old_index);
                 Float64 in_upper_bound = this->mapping->lowerBound(old_index + 1);
@@ -247,6 +267,11 @@ private:
 
         remap_store(*store, new_positive_store);
         remap_store(*negative_store, new_negative_store);
+        
+        std::cerr << "  After remap - pos: count=" << new_positive_store->count 
+                  << ", min_key=" << new_positive_store->min_key << std::endl;
+        std::cerr << "  After remap - neg: count=" << new_negative_store->count 
+                  << ", min_key=" << new_negative_store->min_key << std::endl;
 
         return DDSketchDenseLogarithmic(std::move(new_mapping), std::move(new_positive_store), std::move(new_negative_store), zero_count);
     }

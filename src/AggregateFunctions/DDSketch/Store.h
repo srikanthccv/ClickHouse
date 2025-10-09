@@ -31,11 +31,19 @@ public:
 
     void copy(DDSketchDenseStore* other)
     {
+        std::cerr << "COPY FROM: count=" << other->count << ", min_key=" << other->min_key 
+                  << ", max_key=" << other->max_key << ", offset=" << other->offset << std::endl;
+        
         bins = other->bins;
         count = other->count;
         min_key = other->min_key;
         max_key = other->max_key;
         offset = other->offset;
+        
+        if (count == 0 && min_key == 0)
+        {
+            std::cerr << "empty store with min_key=0 being copied!" << std::endl;
+        }
     }
 
     int length() const
@@ -91,6 +99,12 @@ public:
 
     void serialize(WriteBuffer& buf) const
     {
+        if (count == 0 && (min_key == 0 || max_key == 0))
+        {
+            std::cerr << "WARNING: Serializing empty store with suspicious values! "
+                      << "count=" << count << ", min_key=" << min_key 
+                      << ", max_key=" << max_key << ", offset=" << offset << std::endl;
+        }
 
         // Calculate the size of the dense and sparse encodings to choose the smallest one
         UInt64 num_bins = 0;
@@ -118,6 +132,9 @@ public:
             // Write the dense encoding
             writeBinary(enc.BinEncodingContiguousCounts, buf); // Flag for dense encoding
             writeVarUInt(num_bins, buf);
+            // // Always write start_key and index_delta for compatibility
+            // std::cerr << "SERIALIZE Dense: num_bins=" << num_bins << ", min_key=" << min_key 
+            //           << ", count=" << count << std::endl;
             writeVarInt(min_key, buf);
             writeVarInt(1, buf); // indexDelta in dense encoding
             for (int index = min_key; index <= max_key; ++index)
@@ -129,6 +146,8 @@ public:
         {
             // Write the sparse encoding
             writeBinary(enc.BinEncodingIndexDeltasAndCounts, buf); // Flag for sparse encoding
+            // std::cerr << "SERIALIZE Sparse: num_non_empty_bins=" << num_non_empty_bins 
+            //           << ", count=" << count << std::endl;
             writeVarUInt(num_non_empty_bins, buf);
             int previous_index = 0;
             for (int index = min_key; index <= max_key; ++index)
@@ -148,6 +167,11 @@ public:
     {
         UInt8 encoding_mode;
         readBinary(encoding_mode, buf);
+        // std::cerr << "Store encoding_mode: " << static_cast<int>(encoding_mode) 
+        //           << " (0x" << std::hex << static_cast<int>(encoding_mode) << std::dec << ", binary: ";
+        // for (int i = 7; i >= 0; --i) std::cerr << ((encoding_mode >> i) & 1);
+        // std::cerr << ") Expected: " << static_cast<int>(enc.BinEncodingContiguousCounts) 
+        //           << " or " << static_cast<int>(enc.BinEncodingIndexDeltasAndCounts) << std::endl;
         if (encoding_mode == enc.BinEncodingContiguousCounts)
         {
             UInt64 num_bins;
@@ -156,6 +180,9 @@ public:
             readVarInt(start_key, buf);
             int index_delta;
             readVarInt(index_delta, buf);
+
+            // std::cerr << "  Dense: num_bins=" << num_bins << ", start_key=" << start_key
+            //           << ", index_delta=" << index_delta << std::endl;
 
             for (UInt64 i = 0; i < num_bins; ++i)
             {
@@ -169,6 +196,8 @@ public:
         {
             UInt64 num_non_empty_bins;
             readVarUInt(num_non_empty_bins, buf);
+            // std::cerr << "  Sparse: num_non_empty_bins=" << num_non_empty_bins << std::endl;
+            
             int previous_index = 0;
             for (UInt64 i = 0; i < num_non_empty_bins; ++i)
             {
